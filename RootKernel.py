@@ -8,14 +8,18 @@ from compiler.ast import flatten
 from sklearn.preprocessing import normalize
 from collections import OrderedDict
 
+# This file contains functions for:
+# Compute the p-spectrum string kernel for the base feature space
+# Build the DAG for the FSM model using both weighting schemes
 
-# Compute the String Kernel and Returns Root Kernel
-# Input:
-# file_list: list of file names
-# p: spectrum
-# alphabet: alphabet that documents are generated from
 
 # Create a word list from alphabet
+# This word list contains all possible combinations of length p strings
+# Input:
+# alphabet: amino acid alphabet
+# p: spectrum
+# Output:
+# word_list: a list of all combinations of length p strings
 def create_word_list(alphabet, p):
 
     word_list = list(itertools.product(alphabet, repeat=p))
@@ -26,6 +30,13 @@ def create_word_list(alphabet, p):
 
 
 # Process data
+# Split the CDR3 sequences in each file with a space
+# Input:
+# file_list: a list of file names
+# path: path of data files
+# l: number of CDR3 sequences to be randomly selected. If l = "all", all sequences will be kept
+# Output:
+# data: list of processed CDR3s
 def process_data(file_list, path, l):
     from itertools import chain
     import random
@@ -42,16 +53,25 @@ def process_data(file_list, path, l):
             s = file_line.split()
             data_temp.append(s[0])
 
+        # Randomly select l CDR3s
         if l != 'all':
             random.shuffle(data_temp, random.random)
             data_temp = data_temp[:l]
 
+        # Split the CDR3s with spaces
         data.append(' '.join(chain(data_temp)))
-        # data.append(data_temp)
+
     return data
 
 
-# Process data with sequences and count
+# Process data by splitting the CDR3 sequences with a space
+# This function is particularly designed for P277 mice files, which have different formats from other files
+# Input:
+# file_list: a list of file names
+# path: path of data files
+# l: number of CDR3 sequences to be randomly selected. If l = "all", all sequences will be kept
+# Output:
+# data: list of processed CDR3s
 def process_data_count(file_list, path, l):
 
     data = []
@@ -64,6 +84,7 @@ def process_data_count(file_list, path, l):
 
         del file_name[0]
 
+        # Split the CDR3s with spaces
         for fileline in file_name:
             s = fileline.split(',')
             s = (s[0]+' ')*int(s[1])
@@ -71,158 +92,38 @@ def process_data_count(file_list, path, l):
             data_temp.append(s[:-1])
 
         data_temp = flatten(data_temp)
+
+        # Randomly select l CDR3s
         if l != 'all':
             random.shuffle(data_temp, random.random)
             data_temp = data_temp[:l]
 
         data.append(' '.join(chain(data_temp)))
-        # data.append(data_temp)
 
     return data
 
 
-# Compute root kernel - inefficient, use root_kernel instead
-def root_kernel_in(data, alphabet, p):
-    from re import findall
-
-    # Create word list
-    word_list = create_word_list(alphabet, p)
-
-    # Create empty kernel matrix
-    kern = []
-    kern_dic_whole = dict.fromkeys(word_list, 0)
-
-    for data_item in data:
-        # Create an empty dictionary
-        kern_dic = dict.fromkeys(word_list, 0)
-
-        for words in kern_dic.keys():
-            kern_dic[words] = len(findall('(?=%s)' % words, data_item))
-            kern_dic_whole[words] += kern_dic[words]
-
-        kern.append(kern_dic.values())
-
-    return kern, kern_dic_whole
-
-
-# Compute root kernel
-def root_kernel(data, alphabet, p):
-    from collections import OrderedDict
-
-    # Create word list
-    word_list = create_word_list(alphabet, p)
-
-    # Create kernel matrix
-    kern = []
-    kern_dic_whole = dict.fromkeys(word_list, 0)
-    kern_dic_whole = OrderedDict(sorted(kern_dic_whole.items(), key=lambda t: t[0]))
-
-    for data_item in data:
-        # Create an empty dictionary
-        kern_dic = dict.fromkeys(word_list, 0)
-        kern_dic = OrderedDict(sorted(kern_dic.items(), key=lambda t: t[0]))
-
-        for i in range(0, len(data_item)-p+1):
-            if data_item[i:i+p] in kern_dic:
-                kern_dic[data_item[i:i+p]] += 1
-                kern_dic_whole[data_item[i:i+p]] += 1
-
-        kern.append(list(kern_dic.values()))
-
-    return kern, kern_dic_whole
-
-
-# Compute transition probabilities from dictionary of root kernel
-def trans_prob(kernel_dic):
-    # Create an empty dictionary of total transitions
-    # such that trans_dic[ab] = sum_x kernel_dic[abx]
-    trans_dic = {}
-    for words in kernel_dic.keys():
-        if words[:-1] in trans_dic:
-            trans_dic[words[:-1]] += kernel_dic[words]
-        else:
-            trans_dic[words[:-1]] = kernel_dic[words]
-
-    # Compute transition probabilities
-    for words in kernel_dic.keys():
-        if trans_dic[words[:-1]] == 0:
-            kernel_dic[words] = 0
-        else:
-            kernel_dic[words] = kernel_dic[words]/trans_dic[words[:-1]]
-
-    # trans = kernel_dic.values()
-    # trans = list(trans)
-
-    return kernel_dic
-
-
-# def kernelDAG(data, pmin, pmax, thre):
-#
-#     kern_dic = {}
-#     base_dic = {}
-#
-#     for m in range(0, len(data)):
-#         print('Data item: %d' % m)
-#         for i in range(0, len(data[m])-pmin+1+1):
-#             # Create a dictionary where each entry stores the frequency of a pmin-1 substring
-#             base = data[m][i:i+pmin-1]
-#             if base in base_dic:
-#                 base_dic[base][m] += 1
-#             elif ' ' not in base:
-#                 base_dic[base] = np.zeros(len(data))
-#                 base_dic[base][m] = 1
-#
-#             # Create a dictionary where each entry stores the frequency of transition of length pmin to pmax
-#             # Key for the dictionary is a tuple of substring pairs
-#             # e.g.: transition XYZ: dictionary[(XY, XYZ)] = tf(XYZ), with tf being the term frequency
-#             for j in range(pmin, pmax+1):
-#                 if i+j <= len(data[m]):
-#                     sub = data[m][i:i+j]
-#                     tup = (sub[:-1], sub)
-#                     if tup in kern_dic:
-#                         kern_dic[tup][m] += 1
-#                     elif ' ' not in sub:
-#                         kern_dic[tup] = np.zeros(len(data))
-#                         kern_dic[tup] = kern_dic[tup].astype(float)
-#                         kern_dic[tup][m] = 1
-#
-#     # Exclude entries of base_dic where mean value is less than threshold
-#     base_dic = dict((k, v) for k, v in base_dic.items() if np.mean(v) >= thre)
-#
-#     # Include entries of kern_dic where mean value is greater than or equal to threshold
-#     # If mean value is less than threshold, base_dic is checked
-#     # e.g.: if kern_dic[(XY, XYZ)] < threshold, but both XY and YZ exist in base_dic
-#     #       we delete kern_dic[(XY, XYZ)] but add kern_dic[(XY, YZ)] = tf(XYZ)
-#     for k, v in kern_dic.items():
-#         if np.mean(v) < thre:
-#
-#             if len(k[1]) == pmin and k[0] in base_dic and k[1][1:] in base_dic:
-#                 kern_dic[(k[0], k[1][1:])] = v
-#                 del kern_dic[k]
-#             else:
-#                 del kern_dic[k]
-#
-#     # Build DAG from dictionary kern_dic
-#     # Each key represents an edge on the DAG while each value represents an edge attribute 'kern'
-#     G = nx.DiGraph()
-#     G.add_edges_from(kern_dic.keys())
-#     nx.set_edge_attributes(G, 'kern', kern_dic)
-#
-#     kern_dic.clear()
-#
-#     return G
-
-
+# Build a DAG for training data
+# Input:
+# data: training data
+# pmin: minimum state length
+# pmax: maximum state length
+# thre: threshold t
+# alphabet: amino acid alphabet
+# kernel_type: string or fisher - when set to string, this function returns a DAG equivalent to the p-spectrum kernel
+# Output:
+# DAG G
 def KernelDAG(data, pmin, pmax, thre, alphabet, kernel_type):
     word_list = set(create_word_list(alphabet, pmin))
     M = len(data)
-    edge_dic = {}
-    kern_dic = {}
+    edge_dic = {}  # Python dictionary of edges
+    kern_dic = {}  # Python dictionary of string kernel or Fisher features
 
     for m in range(0, M):
         print('Data item: %d' % m)
         for i in range(0, len(data[m])-pmin+1+1):
-           for j in range(pmin-1, pmax+1):  # computes term frequency of substrings of length pmin-1 to pmax
+           # Compute term frequencies of substrings of length pmin-1 to pmax
+           for j in range(pmin-1, pmax+1):
                if i+j <= len(data[m]):
                 sub = data[m][i:i+j]
                 if sub in kern_dic:
@@ -232,15 +133,14 @@ def KernelDAG(data, pmin, pmax, thre, alphabet, kernel_type):
                     kern_dic[sub] = kern_dic[sub].astype(float)
                     kern_dic[sub][m] = 1
 
-    base_dic = dict((k, v) for k, v in kern_dic.items() if len(k) <= pmax)  # a dictionary of all possible states
-    base_dic = dict((k, v) for k, v in base_dic.items() if np.sum(v) >= thre)
-    kern_dic = dict((k, v) for k, v in kern_dic.items() if len(k) >= pmin)  # a dictionary of all non zero substrings
+    base_dic = dict((k, v) for k, v in kern_dic.items() if len(k) <= pmax)  # a Python dictionary of all possible states
+    base_dic = dict((k, v) for k, v in base_dic.items() if np.sum(v) >= thre)  # a Python dictionary of base features
+    kern_dic = dict((k, v) for k, v in kern_dic.items() if len(k) >= pmin)  # a Python dictionary of all non zero substrings
 
-    word_list = word_list - word_list.intersection(set(base_dic.keys()))
+    word_list = word_list - word_list.intersection(set(base_dic.keys()))  # all length pmin-1 transitions that are not in base_dic
     for word in word_list:
-        edge_dic[(word[:-1], word[1:])] = np.zeros(M)  # a dictionary of all length pmin-1 transitions that are not in base_dic
+        edge_dic[(word[:-1], word[1:])] = np.zeros(M)
 
-    # edge_dic = {}
     for k, v in kern_dic.items():
         if np.sum(v) >= thre:
             if kernel_type == 'fisher':
@@ -256,14 +156,16 @@ def KernelDAG(data, pmin, pmax, thre, alphabet, kernel_type):
     kern_dic.clear()
     base_dic.clear()
 
+    # Add edges to an empty DAG G
     G = nx.DiGraph()
     G.add_edges_from(edge_dic.keys())
     nx.set_edge_attributes(G, 'kern_unnorm', edge_dic)
 
     alphabet_set = set(alphabet)
-    # add edges that represents non-existing transitions (states of length pmin-1 only
+
+    # Add edges that represents non-existing transitions (states of length pmin-1 only
     for node in G.nodes():
-        if 'X' in node:
+        if 'X' in node:  # Remove symbol "X" in CDR3 sequences as it does not belong to 20 amino acids
             G.remove_node(node)
             continue
 
@@ -277,35 +179,14 @@ def KernelDAG(data, pmin, pmax, thre, alphabet, kernel_type):
     return G
 
 
-
-
-# def kernelDAGTest(data, G, pmin, pmax, thre):
-#
-#     edge_key = G.edges()
-#
-#     G_Test = kernelDAG(data, pmin, pmax, thre)
-#
-#     dic = nx.get_edge_attributes(G_Test, 'kern')
-#     for e in edge_key:
-#         if e not in dic:
-#             dic[e] = 0
-#
-#     for e in dic.keys():
-#         if e not in edge_key:
-#             del dic[e]
-#
-#     # Build DAG from dictionary kern_dic
-#     # Each key represents an edge on the DAG while each value represents an edge attribute 'kern'
-#     G = nx.DiGraph()
-#     G.add_edges_from(dic.keys())
-#     nx.set_edge_attributes(G, 'kern', dic)
-#
-#
-#     dic.clear()
-#
-#     return G
-
-
+# Build the DAG for test data
+# Input:
+# data: test data
+# G_train: DAG for training data
+# pmin: minimum state length
+# pmax: maximum state length
+# Output:
+# G_test: DAG for test data
 def kernelDAGTest(data, G_train, pmin, pmax):
     print('Computing Test DAG')
     edges = nx.edges(G_train)
@@ -331,7 +212,12 @@ def kernelDAGTest(data, G_train, pmin, pmax):
     return G_test
 
 
-# Compute transition probabilities with DAG
+# Compute transition probabilities for training data
+# Input:
+# dag: DAG for training data
+# thre: threshold t
+# Output:
+# dag: DAG for training data with transition probabilities
 def tranDAG(dag, thre):
 
     for node in dag.nodes():
@@ -350,59 +236,26 @@ def tranDAG(dag, thre):
     return dag
 
 
-# Compute transition probabilities with DAG
+# Compute transition probabilities for test data
+# Input:
+# dag: DAG for test data
+# G: DAG for training data
+# Output:
+# dag: DAG for test data with transition probabilities
 def tranDAGTest(dag, G):
     tran = nx.get_edge_attributes(G, 'tran')
     nx.set_edge_attributes(dag, 'tran', tran)
 
-    # edge = G.edges()
-    #
-    # for e in edge:
-    #     node = e[1]
-    #     node_pre = e[0]
-    #     dag[node_pre][node]['tran'] = G[node_pre][node]['tran']
-
     return dag
 
 
-# Normalisation
-def normDAG(dag):
-
-    # s = (np.square(dag[e[0]][e[1]]['kern']/np.square(dag[e[0]][e[1]]['tran'])) for e in dag.edges())
-    s = (np.square(dag[e[0]][e[1]]['kern']/dag[e[0]][e[1]]['tran']) for e in dag.edges())
-    # We use K(d, s) = tf(.)/tran(.) here, assuming a uniform probability for substring for convenience in DP
-    s = np.sum(s)
-    s = np.asarray(s)
-    s = np.sqrt(s)
-
-    for edge in dag.edges():
-        nd = edge[1]
-        nd_pre = edge[0]
-
-        # dag[nd_pre][nd]['kern'] /= (s*np.square(dag[nd_pre][nd]['tran']))
-        dag[nd_pre][nd]['kern'] /= (s*dag[nd_pre][nd]['tran'])
-
-    return dag
-
-def normDAGTest(G_test, G_train):
-    # s = (np.square(G_test[e[0]][e[1]]['kern']/np.square(G_train[e[0]][e[1]]['tran'])) for e in G_train.edges())
-    s = (np.square(G_test[e[0]][e[1]]['kern']/G_train[e[0]][e[1]]['tran']) for e in G_train.edges())
-    s = np.sum(s)
-    s = np.asarray(s)
-    s = np.sqrt(s)
-
-    for edge in G_test.edges():
-        nd = edge[1]
-        nd_pre = edge[0]
-
-        # G_test[nd_pre][nd]['kern'] /= (s*np.square(G_train[nd_pre][nd]['tran']))
-        G_test[nd_pre][nd]['kern'] /= (s*G_train[nd_pre][nd]['tran'])
-        # G_test[nd_pre][nd]['tran'] = G_train[nd_pre][nd]['tran']
-
-    return G_test
-
-
-# l2 normalisation
+# Weight the features using log(1/p) or (log(1/p))^2
+# Normalise the weighted features
+# Input:
+# G: DAG for training data
+# power: power = 2: (log(1/p))^2; power = 1: log(1/p)
+# Output:
+# G: normalised DAG for training data
 def normDAGl2(G, power):
     kern = nx.get_edge_attributes(G, 'kern_unnorm')
     tran = nx.get_edge_attributes(G, 'tran')
@@ -416,36 +269,42 @@ def normDAGl2(G, power):
 
     val = np.asarray(val, dtype=float)
     tran = np.asarray(tran, dtype=float)
-    tran = np.log(1/tran)  # logarithm weighting
+    tran = np.log(1/tran)  # logarithm weighting: log(1/p)
     tran[tran == np.inf] = 0
     tran[np.isnan(tran)] = 0
 
-    if power == 2:
+    if power == 2:  # logarithm weighting: (log(1/p))^2
         tran = np.square(tran)
 
+    # Normalisation
     if len(val.shape) == 2:
-        # kern = val/tran[:, None]
         kern = val*tran[:, None]  # avoid numeric problems when using logarithm weighting
         kern = normalize(kern, norm='l2', axis=0)
     else:
         kern = val*tran
-        kern = kern/np.linalg.norm(kern)
+        kern = kern/np.linalg.norm(kern)  # avoid numeric problems when using logarithm weighting
 
     kern = dict(zip(key, kern))
     nx.set_edge_attributes(G, 'kern', kern)
 
-    # delete edges with zero kernels
+    # Delete edges with zero kernels - better keep zero kernels as practically including zero kernels performs better
     # for edge in G.edges():
     #     if float(np.sum(G[edge[0]][edge[1]]['kern'])) == 0.:
     #         G.remove_edge(edge[0], edge[1])
 
-    # remove isolated nodes
+    # Remove isolated nodes
     iso = nx.isolates(G)
     G.remove_nodes_from(iso)
 
     return G
 
 
+# Weight the features and normalise the DAG for test data
+# Input:
+# G_test: DAG for test data
+# power: power = 2: (log(1/p))^2; power = 1: log(1/p)
+# Output:
+# G_test: normalised DAG for test data
 def normDAGl2Test(G_test, power):
     kern = nx.get_edge_attributes(G_test, 'kern_unnorm')
     tran = nx.get_edge_attributes(G_test, 'tran')
@@ -480,7 +339,13 @@ def normDAGl2Test(G_test, power):
     return G_test
 
 
-# String Kernel
+# String kernel: return a base feature matrix of the p-spectrum kernel
+# Input:
+# data: input data (both training and test data)
+# alphabet: alphabet of amino acids
+# p: spectrum
+# Output:
+# kern: a m*20^p matrix of base features, m being the sample size
 def strKern(data, alphabet, p):
     word_list = create_word_list(alphabet, p)
 
@@ -499,6 +364,14 @@ def strKern(data, alphabet, p):
     return kern
 
 
+# String kernel: return Python dictionary of the base feature space of the p-spectrum kernel
+# String kernel: return a base feature matrix of the p-spectrum kernel
+# Input:
+# data: input data (both training and test data)
+# alphabet: alphabet of amino acids
+# p: spectrum
+# Output:
+# kern: a Python dictionary of base features
 def strKernDic(data, alphabet, p):
     word_list = create_word_list(alphabet, p)
 
@@ -522,6 +395,11 @@ def strKernDic(data, alphabet, p):
     return kern_dic
 
 
+# Normalise the string kernel
+# Input:
+# kern_dic: Python dictionary of the spectrum kernel
+# Output:
+# kern_dic: normalised Python dictionary of the spectrum kernel
 def normStr(kern_dic):
     kern_dic = OrderedDict(sorted(kern_dic.items(), key=lambda t: t[0]))
     val = kern_dic.values()
@@ -535,48 +413,14 @@ def normStr(kern_dic):
     return kern_dic
 
 
-def testtest(data, pmin, pmax, thre):
-
-    kern_dic = {}
-    base_dic = {}
-
-    for m in range(0, len(data)):
-        print('Data item: %d' % m)
-        for i in range(0, len(data[m])-pmin+1+1):
-            # Create a dictionary where each entry stores the frequency of a pmin-1 substring
-            base = data[m][i:i+pmin-1]
-            if base in base_dic:
-                base_dic[base][m] += 1
-            elif ' ' not in base:
-                base_dic[base] = np.zeros(len(data))
-                base_dic[base][m] = 1
-
-            # Create a dictionary where each entry stores the frequency of transition of length pmin to pmax
-            # Key for the dictionary is a tuple of substring pairs
-            # e.g.: transition XYZ: dictionary[(XY, XYZ)] = tf(XYZ), with tf being the term frequency
-            for j in range(pmin, pmax+1):
-                if i+j <= len(data[m]):
-                    sub = data[m][i:i+j]
-                    tup = (sub[:-1], sub[1:])
-                    if tup in kern_dic:
-                        kern_dic[tup][m] += 1
-                    elif ' ' not in sub:
-                        kern_dic[tup] = np.zeros(len(data))
-                        kern_dic[tup] = kern_dic[tup].astype(float)
-                        kern_dic[tup][m] = 1
-
-
-    # Build DAG from dictionary kern_dic
-    # Each key represents an edge on the DAG while each value represents an edge attribute 'kern'
-    G = nx.DiGraph()
-    G.add_edges_from(kern_dic.keys())
-    nx.set_edge_attributes(G, 'kern', kern_dic)
-
-    kern_dic.clear()
-
-    return G
-
-
+# Process the data on an existing DAG
+# Input:
+# G_train: DAG to be copied
+# data_total: new data
+# pmin: minimum state length
+# pmax: maximum state length
+# Output:
+# G: DAG for new data
 def CopyDAG(G_train, data_total, pmin, pmax):
     edges = nx.edges(G_train)
     kern = dict.fromkeys(edges)
